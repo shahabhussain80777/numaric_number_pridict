@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RNN vs LSTM vs GRU: try your own data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f4;--surface:#fff;--ink:#14202b;--muted:#566573;--line:#d3dae1;--accent:#14202b;--on-accent:#fff;
+  --actual:#14202b;--rnn:#d1495b;--lstm:#2e86ab;--gru:#3c9d5e;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1720;--surface:#17212c;--ink:#e8eef3;--muted:#9aa9b6;--line:#2b3947;
+  --accent:#e8eef3;--on-accent:#0f1720;--actual:#f2f5f8;--rnn:#ef6f80;--lstm:#5db3d6;--gru:#63c385;color-scheme:dark}}
+*{box-sizing:border-box}html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.55 "IBM Plex Sans",system-ui,sans-serif;padding:clamp(1rem,4vw,3rem)}
+main{max-width:1040px;margin:0 auto}
+h1{font:600 clamp(2rem,5vw,3.2rem)/1.1 "Newsreader",Georgia,serif;margin:0 0 .6rem}
+h2{font:600 1.5rem/1.2 "Newsreader",Georgia,serif;margin:0 0 1rem}
+.lede{color:var(--muted);max-width:64ch;margin:0 0 2rem}
+section{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:clamp(1rem,3vw,1.75rem);margin-bottom:1.25rem}
+textarea{width:100%;min-height:140px;resize:vertical;background:var(--bg);color:var(--ink);border:1px solid var(--line);
+  border-radius:4px;padding:.75rem;font:500 .95rem/1.5 ui-monospace,Consolas,monospace}
+.row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-top:.8rem}
+button,.file{font:500 1rem "IBM Plex Sans",sans-serif;padding:.6rem 1.1rem;border-radius:4px;border:1px solid var(--ink);
+  background:transparent;color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);color:var(--on-accent)}
+button:disabled{opacity:.5;cursor:wait}
+button:focus-visible,.file:focus-within,textarea:focus-visible{outline:3px solid var(--lstm);outline-offset:2px}
+.file input{position:absolute;opacity:0;width:1px;height:1px}
+.status{color:var(--muted);margin:.8rem 0 0;min-height:1.5em}
+.status.err{color:var(--rnn)}
+.chart-box{position:relative;height:clamp(280px,48vw,440px)}
+.rank{list-style:none;margin:0;padding:0;display:grid;gap:.9rem}
+.rank li{display:grid;grid-template-columns:5.5rem 1fr 6rem;gap:1rem;align-items:center}
+.rank .name{font-weight:600}.rank .tag{color:var(--muted);font-weight:400;font-size:.85rem;margin-left:.4rem}
+.rank .track{height:14px;background:var(--bg);border-radius:2px;overflow:hidden}
+.rank .fill{height:100%;display:block}.rank .val{text-align:right;font-variant-numeric:tabular-nums}
+dl{margin:0;display:grid;gap:1.1rem}dt{font-weight:600}dd{margin:.15rem 0 0;max-width:68ch}
+.note{color:var(--muted);font-size:.92rem;margin-top:1rem}
+code{font:500 .9em ui-monospace,Consolas,monospace;background:var(--bg);padding:.1em .35em;border-radius:3px}
+[hidden]{display:none!important}
+@media (max-width:560px){.rank li{grid-template-columns:4.2rem 1fr 4.6rem;gap:.6rem}}
+</style>
+</head>
+<body>
+<main>
+  <h1>RNN, LSTM or GRU: which forecasts better?</h1>
+  <p class="lede">Add a time series in time order, oldest value first. The page finds the numbers, trains all three models in your browser, and shows the graph, RMSE and final answers.</p>
+
+  <section>
+    <h2>Your data</h2>
+    <label for="data" class="note" style="margin:0 0 .5rem;display:block">Paste numbers (one per line or separated by commas), or paste or upload a CSV. If a CSV has several columns, the last numeric column is used.</label>
+    <textarea id="data" spellcheck="false" placeholder="112&#10;118&#10;132&#10;129&#10;121&#10;..."></textarea>
+    <div class="row">
+      <label class="file">Upload CSV<input type="file" id="file" accept=".csv,.txt,text/csv,text/plain"></label>
+      <button type="button" id="sample">Load sample dataset</button>
+      <button type="button" id="run" class="primary">Train and compare</button>
+    </div>
+    <p class="status" id="status" role="status"></p>
+  </section>
+
+  <div id="content" hidden>
+    <section>
+      <h2>Actual values and predictions</h2>
+      <div class="chart-box"><canvas id="chart" role="img" aria-label="Line chart of actual values against RNN, LSTM and GRU predictions"></canvas></div>
+      <p class="note" id="chartNote"></p>
+    </section>
+    <section>
+      <h2>RMSE by model</h2>
+      <ul class="rank" id="rank"></ul>
+      <p class="note">RMSE is the typical size of the prediction error, in the units of your data. Lower is better.</p>
+    </section>
+    <section>
+      <h2>Final answer</h2>
+      <dl id="answers"></dl>
+      <p class="note" id="caveat" hidden></p>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const COLORS = { RNN: "--rnn", LSTM: "--lstm", GRU: "--gru" };
+  const MIN_POINTS = 30;
+  let chart = null, last = null;
+
+  const say = (msg, err) => { const s = $("status"); s.textContent = msg; s.className = "status" + (err ? " err" : ""); };
+
+  /* ---- detect numbers in whatever the person pasted ---- */
+  function parseInput(text) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const values = [];
+    let skipped = 0;
+    lines.forEach((line) => {
+      const parts = line.split(/[,;\t]/).map((p) => p.trim().replace(/^"|"$/g, ""));
+      let found = null;
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const n = Number(parts[i]);
+        if (parts[i] !== "" && Number.isFinite(n)) { found = n; break; }
+      }
+      if (found === null && parts.length === 1) {               // numbers separated by spaces on one line
+        const nums = line.split(/\s+/).map(Number);
+        if (nums.length > 1 && nums.every(Number.isFinite)) { values.push(...nums); return; }
+      }
+      if (found === null) skipped++; else values.push(found);
+    });
+    return { values, skipped };
+  }
+
+  /* ---- sample dataset (sine wave + small noise) ---- */
+  function sample() {
+    let seed = 42; const rnd = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296 - .5);
+    return Array.from({ length: 200 }, (_, t) => Math.round((50 + 20 * Math.sin(2 * Math.PI * t / 20) + rnd() * 5) * 100) / 100);
+  }
+
+  /* ---- model + training ---- */
+  function buildModel(kind, W) {
+    const common = { units: 32, inputShape: [W, 1] };
+    const rec = kind === "RNN" ? tf.layers.simpleRNN(common) : kind === "LSTM" ? tf.layers.lstm(common) : tf.layers.gru(common);
+    const m = tf.sequential({ layers: [rec, tf.layers.dense({ units: 1 })] });
+    m.compile({ optimizer: tf.train.adam(0.005), loss: "meanSquaredError" });
+    return m;
+  }
+
+  async function run() {
+    const { values, skipped } = parseInput($("data").value);
+    if (values.length < MIN_POINTS) {
+      say("Found " + values.length + " numbers. Add at least " + MIN_POINTS + " values in time order.", true); return;
+    }
+    const n = values.length;
+    const W = n >= 48 ? 12 : Math.max(3, Math.floor(n / 5));
+    const split = Math.floor(n * 0.8);
+    if (n - split < 3) { say("Not enough values left for testing. Add more data.", true); return; }
+
+    const btns = [$("run"), $("sample")]; btns.forEach((b) => (b.disabled = true));
+    say("Detected " + n + " numbers" + (skipped ? " (" + skipped + " non-numeric lines skipped)" : "") +
+        ". Window size: " + W + ". Training...");
+    await tf.nextFrame();
+
+    try {
+      const min = Math.min(...values.slice(0, split)), max = Math.max(...values.slice(0, split));
+      const span = max - min || 1;
+      const sc = values.map((v) => (v - min) / span);          // scaler fitted on training part only
+
+      const Xtr = [], ytr = [], Xte = [], yte = [];
+      for (let i = W; i < n; i++) {
+        const win = sc.slice(i - W, i).map((v) => [v]);
+        if (i < split) { Xtr.push(win); ytr.push([sc[i]]); } else { Xte.push(win); yte.push(sc[i]); }
+      }
+      const xTrain = tf.tensor3d(Xtr), yTrain = tf.tensor2d(ytr), xTest = tf.tensor3d(Xte);
+      const actual = yte.map((v) => v * span + min);
+
+      const preds = {}, rmse = {};
+      for (const kind of ["RNN", "LSTM", "GRU"]) {
+        const model = buildModel(kind, W);
+        await model.fit(xTrain, yTrain, {
+          epochs: 80, batchSize: 16, shuffle: true, verbose: 0,
+          callbacks: { onEpochEnd: async (e) => { say("Training " + kind + ": epoch " + (e + 1) + " of 80"); await tf.nextFrame(); } }
+        });
+        const out = Array.from(model.predict(xTest).dataSync()).map((v) => v * span + min);
+        preds[kind] = out;
+        rmse[kind] = Math.sqrt(out.reduce((s, p, i) => s + (p - actual[i]) ** 2, 0) / out.length);
+        model.dispose();
+      }
+      xTrain.dispose(); yTrain.dispose(); xTest.dispose();
+
+      last = { values, split, W, preds, rmse, testLen: actual.length };
+      render();
+      say("Done. Trained on " + split + " points, tested on " + actual.length + ".");
+    } catch (e) {
+      console.error(e); say("Training failed: " + (e.message || e), true);
+    } finally {
+      btns.forEach((b) => (b.disabled = false));
+    }
+  }
+
+  /* ---- results ---- */
+  function render() {
+    const { values, split, W, preds, rmse, testLen } = last;
+    $("content").hidden = false;
+    const labels = values.map((_, i) => i + 1);
+    const pad = (a) => Array(split).fill(null).concat(a);
+    const sets = [{ label: "Actual", data: values, borderColor: css("--actual"), borderWidth: 2.5, pointRadius: 0, tension: .2 }]
+      .concat(["RNN", "LSTM", "GRU"].map((k) => ({
+        label: k + " prediction", data: pad(preds[k]), borderColor: css(COLORS[k]), borderWidth: 2,
+        borderDash: [6, 4], pointRadius: 0, tension: .2 })));
+    if (chart) chart.destroy();
+    chart = new Chart($("chart"), { type: "line", data: { labels, datasets: sets }, options: {
+      responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: "index", intersect: false },
+      scales: { x: { title: { display: true, text: "Time step", color: css("--muted") }, ticks: { color: css("--muted"), maxTicksLimit: 10 }, grid: { color: css("--line") } },
+                y: { ticks: { color: css("--muted") }, grid: { color: css("--line") } } },
+      plugins: { legend: { labels: { color: css("--ink"), usePointStyle: true, boxWidth: 8 } } } } });
+    $("chartNote").textContent = "Predictions cover the last " + testLen + " points (the test period). Each model saw " + W + " past values to predict the next one. Select a legend name to hide a line.";
+
+    const names = ["RNN", "LSTM", "GRU"].sort((a, b) => rmse[a] - rmse[b]);
+    const best = names[0], second = names[1], worst = names[2];
+    const pct = (a, b) => ((b - a) / b * 100).toFixed(1);
+    const rank = $("rank"); rank.textContent = "";
+    names.forEach((k, i) => {
+      const li = document.createElement("li");
+      const name = document.createElement("span"); name.className = "name"; name.textContent = k;
+      if (i === 0) { const t = document.createElement("span"); t.className = "tag"; t.textContent = "lowest"; name.appendChild(t); }
+      const track = document.createElement("span"); track.className = "track";
+      const fill = document.createElement("span"); fill.className = "fill";
+      fill.style.width = (rmse[k] / rmse[worst] * 100) + "%"; fill.style.background = css(COLORS[k]); track.appendChild(fill);
+      const val = document.createElement("span"); val.className = "val"; val.textContent = rmse[k].toFixed(2);
+      li.append(name, track, val); rank.appendChild(li);
+    });
+
+    const rows = [
+      ["1. Which model had the lowest RMSE?", best + " had the lowest RMSE, at " + rmse[best].toFixed(2) + "."],
+      ["2. Which model gave the best prediction?", best + ". Its predicted line stays closest to the actual values, which is what the lowest RMSE measures."],
+      ["3. Was RNN, LSTM, or GRU better?", best + " was better. It beat " + second + " by " + pct(rmse[best], rmse[second]) + "% and " + worst + " by " + pct(rmse[best], rmse[worst]) + "%."]
+    ];
+    const dl = $("answers"); dl.textContent = "";
+    rows.forEach(([q, a]) => { const dt = document.createElement("dt"); dt.textContent = q; const dd = document.createElement("dd"); dd.textContent = a; dl.append(dt, dd); });
+    const cav = $("caveat");
+    cav.hidden = Number(pct(rmse[best], rmse[second])) >= 5;
+    cav.textContent = "The gap between " + best + " and " + second + " is small. Training starts from random weights, so another run could change the order.";
+    $("content").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  /* ---- wiring ---- */
+  $("run").addEventListener("click", run);
+  $("sample").addEventListener("click", () => { $("data").value = sample().join("\n"); say("Sample dataset loaded (200 values of a sine wave). Select Train and compare."); });
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { $("data").value = String(r.result); const { values } = parseInput($("data").value); say("Loaded " + f.name + ": detected " + values.length + " numbers."); };
+    r.onerror = () => say("Could not read that file.", true);
+    r.readAsText(f);
+  });
+  $("data").addEventListener("input", () => { const { values } = parseInput($("data").value); say(values.length ? "Detected " + values.length + " numbers." : ""); });
+})();
+</script>
+</body>
+</html>
