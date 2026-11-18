@@ -1,0 +1,7 @@
+# Only needed to run the notebook on your own computer.
+# Google Colab already has all of these installed.
+tensorflow>=2.15
+numpy
+pandas
+scikit-learn
+matplotlib
